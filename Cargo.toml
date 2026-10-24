@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "fuffer-common",
+    "fuffer-ebpf",
+    "fuffer-cli",
+    "xtask",
+]
