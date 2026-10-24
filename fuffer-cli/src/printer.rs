@@ -4,11 +4,11 @@ use fuffer_common::{FunctionEvent, EVENT_TYPE_ENTER, EVENT_TYPE_EXIT};
 /* print column headers for the live event streaming display */
 pub fn print_header() {
     let header = format!(
-        "{:<12} {:<10} {:<7} {:<20} {:<36} {:<14}",
+        "{:<12} {:<10} {:<7} {:<32} {:<36} {:<14}",
         "TIME", "PID/TID", "EVENT", "FUNCTION", "ARGUMENTS / PAYLOAD", "RETURN / DURATION"
     );
     println!("{}", header.bold());
-    println!("{}", "-".repeat(105).dimmed());
+    println!("{}", "-".repeat(117).dimmed());
 }
 
 /* format and print an individual intercepted execution event
@@ -32,8 +32,8 @@ pub fn print_event(event: &FunctionEvent, symbol_name: &str) {
         "EVENT".cyan()
     };
 
-    let func_display = if symbol_name.len() > 19 {
-        format!("{}…", &symbol_name[..18])
+    let func_display = if symbol_name.len() > 31 {
+        format!("{}…", &symbol_name[..30])
     } else {
         symbol_name.to_string()
     };
@@ -79,7 +79,7 @@ pub fn print_event(event: &FunctionEvent, symbol_name: &str) {
     };
 
     println!(
-        "{:<12} {:<10} {:<16} {:<20} {:<45} {:<14}",
+        "{:<12} {:<10} {:<16} {:<32} {:<45} {:<14}",
         time_str.dimmed(),
         pid_tid,
         event_type_str,

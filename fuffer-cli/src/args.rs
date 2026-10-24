@@ -19,13 +19,28 @@ pub struct CliArgs {
     #[arg(short = 'c', long = "cmd", help = "Command and arguments to execute and trace")]
     pub command: Option<String>,
 
-    /* symbol name or pattern to hook (e.g. 'malloc', 'SSL_write', 'sqlite3_*') */
-    #[arg(short, long, help = "Target symbol name or substring pattern to attach uprobes to")]
+    /* optional symbol name or pattern to hook (sniffs all functions in binary if omitted) */
+    #[arg(
+        short,
+        long,
+        help = "Target symbol name or pattern (e.g. 'malloc', 'SSL_*'). Sniffs all functions if omitted"
+    )]
     pub sym: Option<String>,
 
-    /* path to target ELF binary or shared object (e.g. /lib/x86_64-linux-gnu/libc.so.6) */
-    #[arg(short, long, help = "Path to target binary or shared library (defaults to /proc/<PID>/exe if PID given)")]
+    /* path to target ELF binary or shared object (e.g. /usr/bin/Hyprland or libc.so) */
+    #[arg(
+        short,
+        long,
+        help = "Path to target binary or shared library (defaults to /proc/<PID>/exe if PID given, or system libc)"
+    )]
     pub bin: Option<PathBuf>,
+
+    /* optional cap on the number of functions to hook when sniffing all symbols */
+    #[arg(
+        long,
+        help = "Maximum number of functions to attach when sniffing all symbols in a binary"
+    )]
+    pub max_probes: Option<usize>,
 
     /* kernel symbol name to attach kprobe / kretprobe to (e.g. do_sys_open, tcp_connect) */
     #[arg(short, long, help = "Kernel function name to attach kprobe / kretprobe to")]

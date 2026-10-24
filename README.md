@@ -110,25 +110,35 @@ The resulting CLI binary is placed at `target/release/fuffer-cli` with the relea
 
 ## Usage Examples
 
-### 1. Trace a Running Process by PID
-Attach to an active process (e.g. PID `1234`) and intercept calls to `malloc`:
+### 1. Sniff Every Function Call in a Process (No --sym)
+Omit `--sym` to resolve and sniff every function in the binary:
+```bash
+# Sniffs every function call happening inside Hyprland:
+sudo ./target/release/fuffer-cli --bin /usr/bin/Hyprland
+
+# Or target an active PID and sniff all its function calls:
+sudo ./target/release/fuffer-cli --pid 1234
+```
+
+### 2. Trace Specific Symbols or Wildcards
+Filter for specific function names or wildcard patterns:
 ```bash
 sudo ./target/release/fuffer-cli --pid 1234 --sym malloc
 ```
 
-### 2. Spawn and Sniff a Command
+### 3. Spawn and Sniff a Command
 Launch a new process and hook into matching functions immediately:
 ```bash
 sudo ./target/release/fuffer-cli --cmd "curl -s https://example.com" --sym "SSL_*" -v
 ```
 
-### 3. Trace Shared Library Functions with Wildcards
+### 4. Trace Shared Library Functions with Wildcards
 Hook symbols in a specific dynamic library:
 ```bash
 sudo ./target/release/fuffer-cli --bin /usr/lib/libc.so.6 --sym "open*"
 ```
 
-### 4. Trace Kernel Functions
+### 5. Trace Kernel Functions
 Intercept kernel execution (e.g. `do_sys_open`):
 ```bash
 sudo ./target/release/fuffer-cli --kernel do_sys_open

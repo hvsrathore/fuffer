@@ -35,6 +35,9 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    /* raise file descriptor resource limits to support thousands of concurrent uprobe links */
+    raise_fd_limit();
+
     /* determine target process ID and binary path */
     let mut target_pid = args.pid;
     let mut child_process = None;
@@ -68,37 +71,74 @@ async fn main() -> Result<()> {
 
     let mut attached_probes_count = 0;
 
-    /* attach uprobes if symbol pattern is provided */
-    if let Some(ref sym_pattern) = args.sym {
-        let binary_path: PathBuf = if let Some(ref path) = args.bin {
+    /* attach uprobes if no kernel probe requested or if explicit binary/symbol given */
+    if args.kernel.is_none() || args.sym.is_some() || args.bin.is_some() {
+        let target_raw_path: PathBuf = if let Some(ref path) = args.bin {
             path.clone()
         } else if let Some(pid) = target_pid {
             elf::find_binary_for_pid(pid)
                 .with_context(|| format!("could not resolve executable path for PID {}", pid))?
         } else {
-            /* default to standard C library if no binary specified */
-            PathBuf::from("/lib/x86_64-linux-gnu/libc.so.6")
+            elf::find_default_libc()
+                .context("could not locate standard C library on system. please supply --bin <PATH>")?
         };
 
+        /* automatically unwrap shell wrapper scripts (e.g. /usr/bin/google-chrome-stable) */
+        let binary_path = elf::resolve_elf_binary(&target_raw_path)?;
+        if binary_path != target_raw_path {
+            println!(
+                "/* '{}' is a wrapper script -> resolved underlying ELF binary: {} */",
+                target_raw_path.display(),
+                binary_path.display().to_string().cyan().bold()
+            );
+        }
+
+        let sym_pattern_opt = args.sym.as_deref();
+        if let Some(pat) = sym_pattern_opt {
+            println!(
+                "/* inspecting ELF binary: {} for symbol pattern: '{}' */",
+                binary_path.display(),
+                pat.cyan()
+            );
+        } else {
+            println!(
+                "/* inspecting ELF binary: {} (sniffing all function calls) */",
+                binary_path.display().to_string().cyan()
+            );
+        }
+
+        let mut resolved_symbols = elf::resolve_symbols(&binary_path, sym_pattern_opt)
+            .with_context(|| format!("failed to resolve symbols in '{}'", binary_path.display()))?;
+
+        /* apply optional user-defined probe limit */
+        if let Some(max) = args.max_probes {
+            resolved_symbols.truncate(max);
+        }
+
+        let total = resolved_symbols.len();
         println!(
-            "/* inspecting ELF binary: {} for symbol pattern: '{}' */",
-            binary_path.display(),
-            sym_pattern
+            "/* discovered {} function symbols to hook */",
+            total.to_string().bold()
         );
 
-        let resolved_symbols = elf::resolve_symbols(&binary_path, sym_pattern)
-            .with_context(|| format!("failed to resolve symbols matching '{}'", sym_pattern))?;
+        for (idx, sym) in resolved_symbols.iter().enumerate() {
+            if total > 50 && (idx + 1) % 500 == 0 {
+                println!("/* attaching probes: {}/{}... */", idx + 1, total);
+            }
 
-        for sym in &resolved_symbols {
-            println!(
-                "/* attaching uprobe/uretprobe: symbol='{}' offset=0x{:x} */",
-                sym.name.cyan(),
-                sym.file_offset
-            );
-            tracer
-                .attach_uprobes(&binary_path, &sym.name, sym.file_offset, target_pid)
-                .with_context(|| format!("failed to attach probe for symbol {}", sym.name))?;
-            attached_probes_count += 1;
+            match tracer.attach_uprobes(&binary_path, &sym.demangled_name, sym.file_offset, target_pid) {
+                Ok(()) => {
+                    attached_probes_count += 1;
+                }
+                Err(err) => {
+                    if args.verbose {
+                        eprintln!(
+                            "/* skipping unhookable symbol '{}' at offset 0x{:x}: {} */",
+                            sym.name, sym.file_offset, err
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -115,8 +155,13 @@ async fn main() -> Result<()> {
     }
 
     if attached_probes_count == 0 {
-        bail!("no probes specified. please supply --sym <SYMBOL> or --kernel <FUNCTION>");
+        bail!("no probes were successfully attached to target binary or kernel");
     }
+
+    println!(
+        "/* successfully attached {} probes */",
+        attached_probes_count.to_string().green().bold()
+    );
 
     /* extract BPF ring buffer
      *
@@ -186,4 +231,20 @@ async fn main() -> Result<()> {
 /* check whether effective user has root privileges (UID 0) */
 fn has_required_privileges() -> bool {
     unsafe { libc::geteuid() == 0 }
+}
+
+/* raise file descriptor resource limits to prevent EMFILE when hooking thousands of symbols */
+fn raise_fd_limit() {
+    unsafe {
+        let mut rlim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) == 0 {
+            let target_limit = 1048576.min(rlim.rlim_max.max(65536));
+            rlim.rlim_cur = target_limit;
+            rlim.rlim_max = target_limit;
+            let _ = libc::setrlimit(libc::RLIMIT_NOFILE, &rlim);
+        }
+    }
 }
