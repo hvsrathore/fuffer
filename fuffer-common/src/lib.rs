@@ -18,6 +18,8 @@ pub const EVENT_TYPE_EXIT: u8 = 1;
 pub struct EntryState {
     /* kernel timestamp when function entry was intercepted (nanoseconds) */
     pub start_ns: u64,
+    /* attach cookie or symbol identifier (e.g. file offset) */
+    pub cookie: u64,
     /* registers capturing function arguments (System V AMD64 ABI: RDI, RSI, RDX, RCX, R8, R9) */
     pub args: [u64; 6],
 }
@@ -32,6 +34,8 @@ pub struct FunctionEvent {
     pub pid: u32,
     /* user-space thread ID (task identifier) */
     pub tid: u32,
+    /* attach cookie or symbol identifier (e.g. file offset) */
+    pub cookie: u64,
     /* event direction: 0 = ENTER, 1 = EXIT */
     pub event_type: u8,
     /* explicit padding to maintain 8-byte alignment for 64-bit register array */
@@ -56,6 +60,7 @@ impl Default for EntryState {
     fn default() -> Self {
         Self {
             start_ns: 0,
+            cookie: 0,
             args: [0; 6],
         }
     }
@@ -67,6 +72,7 @@ impl Default for FunctionEvent {
             timestamp_ns: 0,
             pid: 0,
             tid: 0,
+            cookie: 0,
             event_type: EVENT_TYPE_ENTER,
             _pad: [0; 7],
             args: [0; 6],
@@ -88,7 +94,7 @@ mod tests {
     /* verify memory alignment and sizing for zero-copy ABI transfers */
     fn test_struct_alignment_and_size() {
         assert_eq!(core::mem::align_of::<FunctionEvent>(), 8);
-        assert_eq!(core::mem::size_of::<EntryState>(), 56);
-        assert_eq!(core::mem::size_of::<FunctionEvent>(), 416);
+        assert_eq!(core::mem::size_of::<EntryState>(), 64);
+        assert_eq!(core::mem::size_of::<FunctionEvent>(), 424);
     }
 }

@@ -3,7 +3,8 @@ use aya::{
     maps::{HashMap, RingBuf},
     programs::{
         kprobe::KProbe,
-        uprobe::{UProbe, UProbeAttachLocation, UProbeScope},
+        uprobe::{UProbe, UProbeAttachLocation, UProbeAttachPoint, UProbeScope},
+        ProgramError,
     },
     Ebpf, EbpfLoader,
 };
@@ -63,10 +64,11 @@ impl Tracer {
     /* attach uprobe and uretprobe to target binary and file offset
      *
      * educational systems detail:
-     * uprobes insert a software breakpoint instruction (INT3 on x86) at the
-     * specified file offset. when hit, control jumps to the kernel's uprobe handler.
-     * uretprobes hook the return of the function by dynamically rewriting the
-     * return address on the stack to point to a return trampoline.
+     * an eBPF program only needs to be verified and loaded into the kernel ONCE.
+     * after loading, the same loaded program file descriptor can be attached to
+     * multiple probe points by creating separate perf event / BPF links.
+     * we attach with a cookie containing the symbol's file_offset so the eBPF
+     * runtime knows exactly which function was intercepted.
      */
     pub fn attach_uprobes(
         &mut self,
@@ -80,16 +82,25 @@ impl Tracer {
             None => UProbeScope::AllProcesses,
         };
 
-        /* attach entry probe */
+        /* ensure entry probe program is loaded in kernel (ignore AlreadyLoaded for multiple symbols) */
         let uprobe: &mut UProbe = self
             .bpf
             .program_mut("fuffer_uprobe")
             .context("failed to find fuffer_uprobe program")?
             .try_into()?;
-        uprobe.load().context("failed to load fuffer_uprobe into kernel")?;
+        match uprobe.load() {
+            Ok(()) | Err(ProgramError::AlreadyLoaded) => {}
+            Err(e) => return Err(e).context("failed to load fuffer_uprobe into kernel"),
+        }
+
+        let attach_point = UProbeAttachPoint {
+            location: UProbeAttachLocation::AbsoluteOffset(file_offset),
+            cookie: Some(file_offset),
+        };
+
         uprobe
             .attach(
-                UProbeAttachLocation::AbsoluteOffset(file_offset),
+                attach_point,
                 binary_path,
                 scope,
             )
@@ -100,16 +111,25 @@ impl Tracer {
                 )
             })?;
 
-        /* attach return probe */
+        /* ensure return probe program is loaded in kernel */
         let uretprobe: &mut UProbe = self
             .bpf
             .program_mut("fuffer_uretprobe")
             .context("failed to find fuffer_uretprobe program")?
             .try_into()?;
-        uretprobe.load().context("failed to load fuffer_uretprobe into kernel")?;
+        match uretprobe.load() {
+            Ok(()) | Err(ProgramError::AlreadyLoaded) => {}
+            Err(e) => return Err(e).context("failed to load fuffer_uretprobe into kernel"),
+        }
+
+        let ret_attach_point = UProbeAttachPoint {
+            location: UProbeAttachLocation::AbsoluteOffset(file_offset),
+            cookie: Some(file_offset),
+        };
+
         uretprobe
             .attach(
-                UProbeAttachLocation::AbsoluteOffset(file_offset),
+                ret_attach_point,
                 binary_path,
                 scope,
             )
@@ -132,7 +152,10 @@ impl Tracer {
             .program_mut("fuffer_kprobe")
             .context("failed to find fuffer_kprobe program")?
             .try_into()?;
-        kprobe.load().context("failed to load fuffer_kprobe into kernel")?;
+        match kprobe.load() {
+            Ok(()) | Err(ProgramError::AlreadyLoaded) => {}
+            Err(e) => return Err(e).context("failed to load fuffer_kprobe into kernel"),
+        }
         kprobe
             .attach(kernel_function, 0)
             .with_context(|| format!("failed to attach kprobe to kernel symbol '{}'", kernel_function))?;
@@ -142,11 +165,15 @@ impl Tracer {
             .program_mut("fuffer_kretprobe")
             .context("failed to find fuffer_kretprobe program")?
             .try_into()?;
-        kretprobe.load().context("failed to load fuffer_kretprobe into kernel")?;
+        match kretprobe.load() {
+            Ok(()) | Err(ProgramError::AlreadyLoaded) => {}
+            Err(e) => return Err(e).context("failed to load fuffer_kretprobe into kernel"),
+        }
         kretprobe
             .attach(kernel_function, 0)
             .with_context(|| format!("failed to attach kretprobe to kernel symbol '{}'", kernel_function))?;
 
+        self.symbol_map.insert(0, kernel_function.to_string());
         Ok(())
     }
 

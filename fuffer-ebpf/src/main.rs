@@ -6,7 +6,9 @@ use aya_ebpf::{
     macros::{kprobe, kretprobe, map, uprobe, uretprobe},
     maps::{HashMap, RingBuf},
     programs::{ProbeContext, RetProbeContext},
+    EbpfContext,
 };
+use aya_ebpf_bindings::helpers::bpf_get_attach_cookie;
 use fuffer_common::{
     EntryState, FunctionEvent, EVENT_TYPE_ENTER, EVENT_TYPE_EXIT, MAX_PAYLOAD_SIZE,
 };
@@ -38,6 +40,7 @@ pub fn fuffer_uprobe(ctx: ProbeContext) -> u32 {
  * on x86_64 System V AMD64 ABI, function arguments are passed in registers:
  * arg0: RDI, arg1: RSI, arg2: RDX, arg3: RCX, arg4: R8, arg5: R9.
  * we read these registers directly from the trap frame (pt_regs).
+ * we also read the attach cookie to correlate which symbol triggered this uprobe.
  */
 fn try_fuffer_uprobe(ctx: &ProbeContext) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
@@ -53,6 +56,7 @@ fn try_fuffer_uprobe(ctx: &ProbeContext) -> Result<u32, i64> {
     }
 
     let timestamp_ns = unsafe { bpf_ktime_get_ns() };
+    let cookie = unsafe { bpf_get_attach_cookie(ctx.as_ptr()) };
 
     /* capture ABI registers */
     let arg0: u64 = ctx.arg(0).unwrap_or(0);
@@ -64,6 +68,7 @@ fn try_fuffer_uprobe(ctx: &ProbeContext) -> Result<u32, i64> {
 
     let state = EntryState {
         start_ns: timestamp_ns,
+        cookie,
         args: [arg0, arg1, arg2, arg3, arg4, arg5],
     };
 
@@ -77,6 +82,7 @@ fn try_fuffer_uprobe(ctx: &ProbeContext) -> Result<u32, i64> {
             (*event).timestamp_ns = timestamp_ns;
             (*event).pid = pid;
             (*event).tid = tid;
+            (*event).cookie = cookie;
             (*event).event_type = EVENT_TYPE_ENTER;
             (*event).args = [arg0, arg1, arg2, arg3, arg4, arg5];
             (*event).retval = 0;
@@ -142,11 +148,13 @@ fn try_fuffer_uretprobe(ctx: &RetProbeContext) -> Result<u32, i64> {
 
     /* lookup correlated entry state stashed during uprobe */
     let mut duration_ns = 0u64;
+    let mut cookie = 0u64;
     let mut args = [0u64; 6];
     if let Some(entry_state) = unsafe { ENTRY_STORAGE.get(&pid_tgid) } {
         if timestamp_ns >= entry_state.start_ns {
             duration_ns = timestamp_ns - entry_state.start_ns;
         }
+        cookie = entry_state.cookie;
         args = entry_state.args;
         let _ = ENTRY_STORAGE.remove(&pid_tgid);
     }
@@ -158,6 +166,7 @@ fn try_fuffer_uretprobe(ctx: &RetProbeContext) -> Result<u32, i64> {
             (*event).timestamp_ns = timestamp_ns;
             (*event).pid = pid;
             (*event).tid = tid;
+            (*event).cookie = cookie;
             (*event).event_type = EVENT_TYPE_EXIT;
             (*event).args = args;
             (*event).retval = retval;

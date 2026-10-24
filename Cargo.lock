@@ -457,6 +457,7 @@ name = "fuffer-ebpf"
 version = "0.1.0"
 dependencies = [
  "aya-ebpf",
+ "aya-ebpf-bindings",
  "fuffer-common",
 ]
 

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 aya-ebpf = "0.2.1"
+aya-ebpf-bindings = "0.2.0"
 fuffer-common = { path = "../fuffer-common" }
 
 [[bin]]

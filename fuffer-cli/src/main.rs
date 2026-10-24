@@ -153,8 +153,10 @@ async fn main() -> Result<()> {
                 while let Some(item) = inner.next() {
                     if item.len() >= std::mem::size_of::<FunctionEvent>() {
                         let event = unsafe { &*(item.as_ptr() as *const FunctionEvent) };
-                        let sym_name = if let Some(name) = symbol_map.values().next() {
+                        let sym_name = if let Some(name) = symbol_map.get(&event.cookie) {
                             name.as_str()
+                        } else if let Some(first) = symbol_map.values().next() {
+                            first.as_str()
                         } else {
                             "unknown"
                         };
